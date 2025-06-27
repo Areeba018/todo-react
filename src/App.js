@@ -1,14 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './App.css';
+import Login from './Login';
+import Register from './Register';
+import * as api from './api';
 
 const initialTags = [
   { id: 1, name: 'High Priority', color: '#ff5252' },
   { id: 2, name: 'Medium Priority', color: '#ffb300' },
   { id: 3, name: 'Low Priority', color: '#4caf50' },
 ];
-const stickyColors = ['#b2ebf2', '#fff9c4', '#ffcdd2', '#ffe0b2', '#e1bee7', '#c8e6c9'];
+const stickyColors = [
+  '#fff9c4', // Light Yellow
+  '#b2ebf2', // Light Cyan
+  '#ffe0b2', // Light Orange
+  '#f8bbd0', // Light Pink
+  '#c8e6c9', // Light Green
+  '#d1c4e9', // Light Purple
+  '#b3e5fc', // Light Blue
+  '#ffecb3', // Light Amber
+  '#f0f4c3', // Light Lime
+  '#ffccbc', // Light Red-Orange
+];
 
 function App() {
+  // Auth state
+  const [token, setToken] = useState(() => localStorage.getItem('token') || '');
+  const [showLogin, setShowLogin] = useState(!token);
+  const [showRegister, setShowRegister] = useState(false);
+
   const [tags, setTags] = useState(initialTags);
   const [tasks, setTasks] = useState([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -27,6 +46,56 @@ function App() {
   const [newChecklistItem, setNewChecklistItem] = useState('');
   const [newChecklist, setNewChecklist] = useState([]);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'light');
+  const [showSettings, setShowSettings] = useState(false);
+  const [userInfo, setUserInfo] = useState({ username: '', email: '' });
+
+  // Fetch tasks from backend
+  useEffect(() => {
+    if (token) {
+      api.fetchTasks(token)
+        .then(setTasks)
+        .catch(() => setTasks([]));
+    }
+  }, [token]);
+
+  // Fetch user info when token changes or settings modal opens
+  useEffect(() => {
+    if (token && showSettings) {
+      api.fetchUserInfo(token).then(setUserInfo).catch(() => setUserInfo({ username: '', email: '' }));
+    }
+  }, [token, showSettings]);
+
+  // Apply theme
+  useEffect(() => {
+    document.body.setAttribute('data-theme', theme);
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  // Auth handlers
+  const handleLogin = (jwt) => {
+    setToken(jwt);
+    localStorage.setItem('token', jwt);
+    setShowLogin(false);
+    setShowRegister(false);
+  };
+  const handleLogout = () => {
+    setToken('');
+    localStorage.removeItem('token');
+    setShowLogin(true);
+  };
+  const handleRegisterSuccess = () => {
+    setShowRegister(false);
+    setShowLogin(true);
+  };
+
+  // Show Login/Register if not authenticated
+  if (showLogin) {
+    return <Login onLogin={handleLogin} switchToRegister={() => { setShowLogin(false); setShowRegister(true); }} />;
+  }
+  if (showRegister) {
+    return <Register onRegisterSuccess={handleRegisterSuccess} switchToLogin={() => { setShowRegister(false); setShowLogin(true); }} />;
+  }
 
   // Helper to get next color (minimize repeats)
   const getNextColor = () => {
@@ -37,21 +106,22 @@ function App() {
     return stickyColors[idx];
   };
 
-  const handleAddTask = (e) => {
+  const handleAddTask = async (e) => {
     e.preventDefault();
     if (!newTask.trim()) return;
-    setTasks([
-      ...tasks,
-      {
-        id: Date.now(),
-        text: newTask,
-        description: newDesc,
-        color: getNextColor(),
-        tag: newTaskTag || null,
-        completed: false,
-        checklist: newChecklist.map(item => ({ text: item, done: false })),
-      },
-    ]);
+    const taskData = {
+      text: newTask,
+      description: newDesc,
+      color: getNextColor(),
+      tag: newTaskTag || null,
+      completed: false,
+      checklist: newChecklist.map(item => ({ text: item, done: false })),
+    };
+    try {
+      await api.addTask(token, taskData);
+      const updated = await api.fetchTasks(token);
+      setTasks(updated);
+    } catch {}
     setNewTask('');
     setNewDesc('');
     setNewTaskTag('');
@@ -71,11 +141,17 @@ function App() {
     setShowAddTag(false);
   };
 
-  const handleToggleComplete = (id) => {
-    setTasks(tasks.map(task => task.id === id ? { ...task, completed: !task.completed } : task));
-    if (selectedTask && selectedTask.id === id) {
-      setSelectedTask({ ...selectedTask, completed: !selectedTask.completed });
-    }
+  const handleToggleComplete = async (id) => {
+    const task = tasks.find(t => t.id === id);
+    if (!task) return;
+    try {
+      await api.updateTask(token, id, { completed: !task.completed });
+      const updated = await api.fetchTasks(token);
+      setTasks(updated);
+      if (selectedTask && selectedTask.id === id) {
+        setSelectedTask({ ...selectedTask, completed: !selectedTask.completed });
+      }
+    } catch {}
   };
 
   const openTaskDetail = (task) => {
@@ -87,29 +163,33 @@ function App() {
     setNewChecklistItem('');
   };
 
-  const handleEditTask = (e) => {
+  const handleEditTask = async (e) => {
     e.preventDefault();
-    setTasks(tasks.map(task =>
-      task.id === selectedTask.id
-        ? {
-            ...task,
-            text: editTask,
-            description: editDesc,
-            tag: editTag,
-            checklist: editChecklist,
-            completed: selectedTask.completed
-          }
-        : task
-    ));
+    if (!selectedTask) return;
+    try {
+      await api.updateTask(token, selectedTask.id, {
+        text: editTask,
+        description: editDesc,
+        tag: editTag,
+        checklist: editChecklist,
+        completed: selectedTask.completed
+      });
+      const updated = await api.fetchTasks(token);
+      setTasks(updated);
+      setSelectedTask(null);
+    } catch {}
   };
 
-  const handleChecklistToggle = (taskId, idx) => {
-    setTasks(tasks.map(task => {
-      if (task.id !== taskId) return task;
-      const newChecklist = task.checklist.map((item, i) => i === idx ? { ...item, done: !item.done } : item);
+  const handleChecklistToggle = async (taskId, idx) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+    const newChecklist = task.checklist.map((item, i) => i === idx ? { ...item, done: !item.done } : item);
+    try {
+      await api.updateTask(token, taskId, { checklist: newChecklist });
+      const updated = await api.fetchTasks(token);
+      setTasks(updated);
       if (selectedTask && selectedTask.id === taskId) setSelectedTask({ ...task, checklist: newChecklist });
-      return { ...task, checklist: newChecklist };
-    }));
+    } catch {}
   };
 
   const handleEditChecklistToggle = (idx) => {
@@ -136,10 +216,15 @@ function App() {
     setShowDeleteConfirm(true);
   };
 
-  const confirmDeleteTask = () => {
-    setTasks(tasks.filter(task => task.id !== selectedTask.id));
-    setSelectedTask(null);
-    setShowDeleteConfirm(false);
+  const confirmDeleteTask = async () => {
+    if (!selectedTask) return;
+    try {
+      await api.deleteTask(token, selectedTask.id);
+      const updated = await api.fetchTasks(token);
+      setTasks(updated);
+      setSelectedTask(null);
+      setShowDeleteConfirm(false);
+    } catch {}
   };
 
   const cancelDeleteTask = () => {
@@ -147,7 +232,7 @@ function App() {
   };
 
   return (
-    <div className="sticky-app-root improved-gap">
+    <div className={`sticky-app-root improved-gap ${theme}-theme`}>
       <aside className="sidebar">
         <div className="sidebar-header">
           <span className="logo">📝</span>
@@ -159,8 +244,8 @@ function App() {
           </button>
         </div>
         <div className="sidebar-footer">
-          <button className="sidebar-btn">Settings</button>
-          <button className="sidebar-btn">Sign out</button>
+          <button className="sidebar-btn" onClick={() => setShowSettings(true)}>Settings</button>
+          <button className="sidebar-btn" onClick={handleLogout}>Sign out</button>
         </div>
       </aside>
       <main className="sticky-wall">
@@ -178,7 +263,7 @@ function App() {
               <div
                 key={task.id}
                 className={`sticky-note${task.completed ? ' completed' : ''}`}
-                style={{ background: task.color }}
+                style={{ background: stickyColors[tIdx % stickyColors.length] }}
                 onClick={() => openTaskDetail(task)}
               >
                 <button
@@ -380,6 +465,21 @@ function App() {
                 <button className="delete-task-btn" onClick={confirmDeleteTask}>Delete</button>
                 <button className="sidebar-btn" onClick={cancelDeleteTask}>Cancel</button>
               </div>
+            </div>
+          </div>
+        )}
+        {showSettings && (
+          <div className="add-modal">
+            <div className="add-form">
+              <h2>Settings</h2>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontWeight: 500, marginRight: 12 }}>Theme:</label>
+                <select value={theme} onChange={e => setTheme(e.target.value)}>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+              </div>
+              <button type="button" onClick={() => setShowSettings(false)}>Close</button>
             </div>
           </div>
         )}
