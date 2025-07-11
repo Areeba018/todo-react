@@ -145,13 +145,21 @@ function App() {
     const task = tasks.find(t => t.id === id);
     if (!task) return;
     try {
-      await api.updateTask(token, id, { completed: !task.completed });
+      await api.updateTask(token, id, {
+        text: task.text,
+        description: task.description,
+        tag: task.tag,
+        checklist: task.checklist,
+        completed: !task.completed
+      });
       const updated = await api.fetchTasks(token);
       setTasks(updated);
       if (selectedTask && selectedTask.id === id) {
         setSelectedTask({ ...selectedTask, completed: !selectedTask.completed });
       }
-    } catch {}
+    } catch (e) {
+      console.log('Error updating task:', e);
+    }
   };
 
   const openTaskDetail = (task) => {
@@ -185,11 +193,19 @@ function App() {
     if (!task) return;
     const newChecklist = task.checklist.map((item, i) => i === idx ? { ...item, done: !item.done } : item);
     try {
-      await api.updateTask(token, taskId, { checklist: newChecklist });
+      await api.updateTask(token, taskId, {
+        text: task.text,
+        description: task.description,
+        tag: task.tag,
+        checklist: newChecklist,
+        completed: task.completed
+      });
       const updated = await api.fetchTasks(token);
       setTasks(updated);
       if (selectedTask && selectedTask.id === taskId) setSelectedTask({ ...task, checklist: newChecklist });
-    } catch {}
+    } catch (e) {
+      console.log('Error updating checklist:', e);
+    }
   };
 
   const handleEditChecklistToggle = (idx) => {
